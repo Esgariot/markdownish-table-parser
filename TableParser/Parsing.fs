@@ -5,6 +5,23 @@
 namespace TableParser
 #endif
 
+module Parsing =
+    open Microsoft.FSharp.Reflection
+    open FParsec
+    let pUnionCase c =
+        match FSharpValue.GetUnionFields(c, c.GetType()) with
+        | case, _ -> case.Name |> pstringCI
+
+type TokenTable = private {
+    Header: string [,]
+    Body: string [,]
+}
+//    with member this.Whole withDelimiter =
+//        let mutable result = Array2D.zeroCreateBased Array2D.
+
+//module TokenTable =
+    
+
 module TableParsing =
     open FSharpPlus
     open FParsec
@@ -22,14 +39,40 @@ module TableParsing =
     let pCell = many pCellChar |>> (List.concat >> List.toArray) |>> (fun x -> new string(x))
     let pRow u = spaces >>. pWall >>. (sepBy1 pCell pWall) .>> skipRestOfLine false |>> (fun s -> s.[..^1]) 
                 >>= (fun cs -> cs |> (u << List.length) >>. preturn cs)
-    let pTable = 
+    let pTokenTable =
         let setCol cs = updateUserState (fun u -> { u with Columns = Some cs })
         let checkCol cs =  userStateSatisfies (fun {Columns = c} -> c |> exists ((=) cs) ) <?> "Matching column count"
         spaces >>. pRow setCol .>> spaces .>>. sepEndBy1 (pRow checkCol) spaces 
-        |>> (fun (first, rest) -> first::rest) 
+        |>> (fun (first, rest) -> first::rest) // TODO: To TokenTable
+
+module Domain =
+    type ComponentId = ComponentId of int
+
+    type ColumnType =
+        | Attribute
+        | Rate
+        | Volume
+        | TimeSeries
+        | Meta
+
+    type Header =
+        | Component of ComponentId
+        | DisplayGroup of string
+        | ColumnType
+
+    type HeaderColumn = {
+        Component: ComponentId
+        ColumnType: ColumnType
+    }
 
 module DomainParsing =
     open FParsec
+    open Domain
+
+    let pComponent = puint16 |>> (int >> ComponentId)
+    let pColumnName = many anyChar |>> (fun x -> (new string(List.toArray x)).Trim())
+
+//    let makeHeader {Header = header} =
 
 
 module Testing =
@@ -43,8 +86,8 @@ module Testing =
             |ColumnName  	|a      |  b        	| Parent	| Id    |   \\  |
             |ColumnType  	|int    |string			| parent	| id    |   \|  |
             |---------------|-------|---------------|-----------|-------|-------|
-            |				| 10    | abba          |           | 1..10 |       |
+            |		    	| 10    | abba          |           | 1..10 |       |
             |               |       |               |     1     |       |   2   |
             """
 
-    let test = runParserOnString pTable TableState.Empty "" Table
+    let test = runParserOnString pTokenTable TableState.Empty "" Table

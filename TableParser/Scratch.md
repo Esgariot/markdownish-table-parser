@@ -1,4 +1,5 @@
-﻿#if  INTERACTIVE
+﻿```f#
+#if  INTERACTIVE
 #r "nuget: FSharpPlus"
 #r "nuget: FParsec"
 #else
@@ -30,9 +31,21 @@ module Parsing =
 module TableParsing =
     open FParsec
     open Parsing
-    
+
+    type HeaderState =  {
+        Columns:        int option
+    }
+    with static member Empty = {Columns = None}
+
+    type BodyState = {
+        Columns:        int
+        CurrentColumn:  int
+        CurrentRow:     int
+
+    }
+
     let pWall = pchar '|'
-    
+
     let pHeaderRow pFirst pRest pColumnState =
         let wall = between whitespaceNoNewLine whitespaceNoNewLine pWall
         (wall >>? pFirst .>> wall)
@@ -40,13 +53,15 @@ module TableParsing =
         (sepEndBy pRest wall >>= (fun x -> x |> List.length |> pColumnState >>% x))
         .>> (opt newline)
 
-    type TableState<'columnType> = {
-        Columns: int option
-        Types: 'columnType list
-    }
-    with static member Empty = {Columns = None;Types = []}
-    
+    let pBodyRow pFirst (pCell:int->Parser<'c,'u>) =
+        let wall = between whitespaceNoNewLine whitespaceNoNewLine pWall
+        (wall >>? pFirst .>> wall)
+        .>>.
+        (sepEndBy (updateUserState (fun x->{x with CurrentColumn = x.CurrentColumn+1}) >>. (getUserState |>> (fun (x:BodyState)-> x.CurrentColumn) >>= pCell)) wall )
+        .>> (opt newline)
+
 module Domain =
+    open System
     type Header =
         | Component
         | DisplayGroup
@@ -61,6 +76,12 @@ module Domain =
     type HeaderRow =
         |Component of Component list
         |ColumnType of ColumnType list
+
+    [<Flags>]
+    type RowFlag =
+        | New = 1
+        | Modified = 2
+        | Removed = 4
 
 
 module DomainParsing =
@@ -77,17 +98,16 @@ module DomainParsing =
     let pDomainHeaderRow u =
         let r first rest  = pHeaderRow (pUnionCase first) rest u >>= (snd >> first)
         let (~%) x = x >> preturn
-        let setColumnTypes cs = updateUserState ( fun u -> {u with Types = cs})
         choice [
-            r   %Component                                                 pComponent 
-            r   (fun cs -> cs |> %ColumnType .>> (cs |> setColumnTypes))   pColumnType
+            r   %Component  pComponent
+            r   %ColumnType pColumnType
         ]
 
     let pInitialHeaderRow p =
-        p (fun c-> updateUserState ( fun u -> {u with Columns = Some c}))
+        p (fun c-> updateUserState ( fun u -> {u with HeaderState.Columns = Some c}))
 
     let pSubsequentHeaderRow p=
-        p (fun c-> userStateSatisfies ( fun u-> u.Columns |> exists((=)c)) <?> "column count equal to that of the first row")
+        p (fun c-> userStateSatisfies ( fun (u:HeaderState)-> u.Columns |> exists((=)c)) <?> "column count equal to that of the first row")
 
     let pSeparatorRow u =
         let line = pchar '-' |> many
@@ -104,21 +124,22 @@ module DomainParsing =
 
 
 [<AutoOpen>]
-module Test = 
+module Test =
     open DomainParsing
     open TableParsing
-    open Domain
     open FParsec
 
     [<Literal>]
-    let Table = 
+    let Table =
             """
-            |Component   	|100    | 100       	|	101		| 100   |   101 |
-            |ColumnName  	|a      |  b        	| Parent	| Id    |   Id  |
-            |ColumnType  	|int    |string			| parent	| id    |   id  |
-            |---------------|-------|---------------|-----------|-------|-------|
-            |				| 10    | abba          |           | 1..10 |       |
-            |               |       |               |     1     |       |   2   |
+            | Component       | 100     | 100             | 101         | 100     | 101     |
+            |-----------------|---------|-----------------|-------------|---------|---------|
+            | ColumnName      | a       | b               | Parent      | Id      | Id      |
+            | ColumnType      | int     | string          | parent      | id      | id      |
+            | --------------- | ------- | --------------- | ----------- | ------- | ------- |
+            |                 | 10      | abba            |             | 1..10   |         |
+            |                 |         |                 | 1           |         | 2       |
             """
 
-    let result = runParserOnString pHeader TableState<ColumnType>.Empty "" Table
+    let result = runParserOnString pHeader HeaderState.Empty "" Table
+```
